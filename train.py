@@ -50,7 +50,12 @@ def validate(model: DiffusionSegmentation, val_loader: DataLoader, device: torch
     with torch.no_grad():
         for image, mask in val_loader:
             image, mask = image.to(device), mask.to(device)
+            
+            # For validation, we want to compute the training loss
+            # So we need to call the model in training mode temporarily
+            model.train()
             predicted, target = model(image, mask)
+            model.eval()
             
             if loss_fn is not None:
                 loss = loss_fn(predicted, target)
@@ -222,6 +227,9 @@ def main():
         if val_loader:
             avg_val_loss = validate(model, val_loader, device, loss_fn)
             val_losses.append(avg_val_loss)
+            print(f"Epoch {epoch+1}/{args.epochs} - Train Loss: {avg_train_loss:.6f}, Val Loss: {avg_val_loss:.6f}, LR: {current_lr:.2e}")
+        else:
+            print(f"Epoch {epoch+1}/{args.epochs} - Train Loss: {avg_train_loss:.6f}, LR: {current_lr:.2e}")
         
         # Update learning rate
         scheduler.step()
@@ -272,7 +280,10 @@ def main():
     print(f"Saved final model: {final_model_path}")
     
     # Plot training curves
-    plot_training_curves(train_losses, "Training Loss", str(output_dir / "training_curves.png"))
+    if val_losses:
+        plot_training_curves(train_losses, val_losses, "Training vs Validation Loss", str(output_dir / "training_curves.png"))
+    else:
+        plot_training_curves(train_losses, "Training Loss", str(output_dir / "training_curves.png"))
     
     if args.wandb:
         wandb.finish()
