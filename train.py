@@ -223,6 +223,10 @@ def main():
         avg_train_loss = sum(epoch_losses) / len(epoch_losses)
         train_losses.append(avg_train_loss)
         
+        # Update learning rate
+        scheduler.step()
+        current_lr = optimizer.param_groups[0]['lr']
+        
         # Validation
         if val_loader:
             avg_val_loss = validate(model, val_loader, device, loss_fn)
@@ -231,13 +235,7 @@ def main():
         else:
             print(f"Epoch {epoch+1}/{args.epochs} - Train Loss: {avg_train_loss:.6f}, LR: {current_lr:.2e}")
         
-        # Update learning rate
-        scheduler.step()
-        
         # Logging
-        current_lr = optimizer.param_groups[0]['lr']
-        print(f"Epoch {epoch+1}/{args.epochs} - Train Loss: {avg_train_loss:.6f}, LR: {current_lr:.2e}")
-        
         if args.wandb:
             log_dict = {
                 "epoch": epoch + 1,
