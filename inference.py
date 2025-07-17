@@ -101,11 +101,11 @@ def batch_inference(model: DiffusionSegmentation, input_dir: str, output_dir: st
                 image = preprocess_image(str(image_file), image_size)
                 vis_file = output_path / f"{image_file.stem}_visualization.png"
                 visualize_segmentation(
-                    image, None, predicted_mask.cpu(),
+                    image, predicted_mask.cpu(), None,  # Swap order
                     title=f"Segmentation: {image_file.name}",
                     save_path=str(vis_file)
                 )
-            
+
         except Exception as e:
             print(f"Error processing {image_file}: {e}")
     
@@ -141,7 +141,7 @@ def interactive_inference(model: DiffusionSegmentation, device: torch.device,
             
             # Show results
             visualize_segmentation(
-                image, None, predicted_mask.cpu(),
+                image, predicted_mask.cpu(), None,  # Swap order
                 title=f"Segmentation: {os.path.basename(image_path)}"
             )
             
@@ -253,10 +253,12 @@ def main():
         # Save visualization
         vis_file = output_path / f"{input_name}_visualization.png"
         visualize_segmentation(
-            image, None, predicted_mask.cpu(),
+            image, predicted_mask.cpu(), None,  # Swap order: image, predicted, ground_truth
             title=f"Segmentation: {Path(args.input).name}",
             save_path=str(vis_file)
         )
+        plt.close()
+        
         print(f"Saved visualization: {vis_file}")
         
         # Visualize inference process if requested
