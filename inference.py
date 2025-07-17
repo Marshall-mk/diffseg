@@ -19,9 +19,22 @@ from utils.data_utils import preprocess_image
 from utils.visualization import visualize_segmentation, plot_inference_steps
 
 
-def load_model(checkpoint_path: str, device: torch.device, timesteps: int = 1000) -> DiffusionSegmentation:
+def load_model(checkpoint_path: str, device: torch.device, timesteps: int = 1000, 
+               unet_type: str = "custom", pretrained_model_name_or_path: str = None,
+               diffusion_type: str = "gaussian", morph_type: str = "dilation",
+               morph_kernel_size: int = 3, morph_schedule_type: str = "linear") -> DiffusionSegmentation:
     """Load trained model from checkpoint"""
-    model = DiffusionSegmentation(in_channels=3, num_classes=1, timesteps=timesteps).to(device)
+    model = DiffusionSegmentation(
+        in_channels=3, 
+        num_classes=1, 
+        timesteps=timesteps,
+        unet_type=unet_type,
+        pretrained_model_name_or_path=pretrained_model_name_or_path,
+        diffusion_type=diffusion_type,
+        morph_type=morph_type,
+        morph_kernel_size=morph_kernel_size,
+        morph_schedule_type=morph_schedule_type
+    ).to(device)
     
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'])
@@ -161,6 +174,21 @@ def main():
     parser.add_argument('--timesteps', type=int, default=1000, help='Number of diffusion timesteps')
     parser.add_argument('--visualize-process', action='store_true', help='Visualize inference process')
     parser.add_argument('--no-vis', action='store_true', help='Skip saving visualizations in batch mode')
+    parser.add_argument('--unet-type', type=str, default='custom',
+                       choices=['custom', 'diffusers_2d', 'diffusers_2d_cond'], 
+                       help='Type of UNet to use')
+    parser.add_argument('--pretrained-model', type=str, help='Path or name of pretrained diffusers model')
+    parser.add_argument('--diffusion-type', type=str, default='gaussian',
+                       choices=['gaussian', 'morphological'], 
+                       help='Type of diffusion process')
+    parser.add_argument('--morph-type', type=str, default='dilation',
+                       choices=['dilation', 'erosion', 'mixed'], 
+                       help='Type of morphological operation')
+    parser.add_argument('--morph-kernel-size', type=int, default=3,
+                       help='Size of morphological kernel')
+    parser.add_argument('--morph-schedule', type=str, default='linear',
+                       choices=['linear', 'cosine', 'quadratic'],
+                       help='Schedule type for morphological intensity')
     
     args = parser.parse_args()
     
@@ -170,7 +198,8 @@ def main():
     
     # Load model
     print(f"Loading model from {args.checkpoint}...")
-    model = load_model(args.checkpoint, device, args.timesteps)
+    model = load_model(args.checkpoint, device, args.timesteps, args.unet_type, args.pretrained_model,
+                      args.diffusion_type, args.morph_type, args.morph_kernel_size, args.morph_schedule)
     
     image_size = (args.image_size, args.image_size)
     

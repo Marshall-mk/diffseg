@@ -14,20 +14,25 @@ from tqdm import tqdm
 import wandb
 from typing import Optional
 
-from src.models import DiffusionSegmentation
+from src.models import DiffusionSegmentation, MorphologicalLoss
 from utils.data_utils import load_dataset, create_synthetic_data
 from utils.visualization import plot_training_curves, visualize_segmentation
 
 
 def train_step(model: DiffusionSegmentation, image: torch.Tensor, mask: torch.Tensor, 
-               optimizer: torch.optim.Optimizer, device: torch.device) -> float:
+               optimizer: torch.optim.Optimizer, device: torch.device, 
+               loss_fn=None) -> float:
     """Single training step"""
     model.train()
     optimizer.zero_grad()
     
     image, mask = image.to(device), mask.to(device)
-    predicted_noise, actual_noise = model(image, mask)
-    loss = F.mse_loss(predicted_noise, actual_noise)
+    predicted, target = model(image, mask)
+    
+    if loss_fn is not None:
+        loss = loss_fn(predicted, target)
+    else:
+        loss = F.mse_loss(predicted, target)
     
     loss.backward()
     optimizer.step()
@@ -35,7 +40,8 @@ def train_step(model: DiffusionSegmentation, image: torch.Tensor, mask: torch.Te
     return loss.item()
 
 
-def validate(model: DiffusionSegmentation, val_loader: DataLoader, device: torch.device) -> float:
+def validate(model: DiffusionSegmentation, val_loader: DataLoader, device: torch.device, 
+             loss_fn=None) -> float:
     """Validation loop"""
     model.eval()
     total_loss = 0
@@ -44,8 +50,13 @@ def validate(model: DiffusionSegmentation, val_loader: DataLoader, device: torch
     with torch.no_grad():
         for image, mask in val_loader:
             image, mask = image.to(device), mask.to(device)
-            predicted_noise, actual_noise = model(image, mask)
-            loss = F.mse_loss(predicted_noise, actual_noise)
+            predicted, target = model(image, mask)
+            
+            if loss_fn is not None:
+                loss = loss_fn(predicted, target)
+            else:
+                loss = F.mse_loss(predicted, target)
+                
             total_loss += loss.item()
             num_batches += 1
     
@@ -91,6 +102,23 @@ def main():
     parser.add_argument('--val-split', type=float, default=0.0, help='Validation split ratio (0.0 = no validation)')
     parser.add_argument('--augmentation-mode', type=str, default='medium', 
                        choices=['light', 'medium', 'heavy', 'none'], help='Augmentation intensity')
+    parser.add_argument('--unet-type', type=str, default='custom',
+                       choices=['custom', 'diffusers_2d', 'diffusers_2d_cond'], 
+                       help='Type of UNet to use')
+    parser.add_argument('--pretrained-model', type=str, help='Path or name of pretrained diffusers model')
+    parser.add_argument('--diffusion-type', type=str, default='gaussian',
+                       choices=['gaussian', 'morphological'], 
+                       help='Type of diffusion process')
+    parser.add_argument('--morph-type', type=str, default='dilation',
+                       choices=['dilation', 'erosion', 'mixed'], 
+                       help='Type of morphological operation')
+    parser.add_argument('--morph-kernel-size', type=int, default=3,
+                       help='Size of morphological kernel')
+    parser.add_argument('--morph-schedule', type=str, default='linear',
+                       choices=['linear', 'cosine', 'quadratic'],
+                       help='Schedule type for morphological intensity')
+    parser.add_argument('--use-morph-loss', action='store_true',
+                       help='Use morphological loss instead of MSE')
     
     args = parser.parse_args()
     
@@ -115,11 +143,23 @@ def main():
     model = DiffusionSegmentation(
         in_channels=3, 
         num_classes=1, 
-        timesteps=args.timesteps
+        timesteps=args.timesteps,
+        unet_type=args.unet_type,
+        pretrained_model_name_or_path=args.pretrained_model,
+        diffusion_type=args.diffusion_type,
+        morph_type=args.morph_type,
+        morph_kernel_size=args.morph_kernel_size,
+        morph_schedule_type=args.morph_schedule
     ).to(device)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    
+    # Setup loss function
+    loss_fn = None
+    if args.use_morph_loss and args.diffusion_type == "morphological":
+        loss_fn = MorphologicalLoss().to(device)
+        print("Using morphological loss function")
     
     # Load checkpoint if resuming
     start_epoch = 0
@@ -167,12 +207,12 @@ def main():
             # Use synthetic data
             for batch_idx in tqdm(range(100), desc=f"Epoch {epoch+1}/{args.epochs}"):
                 image, mask = create_synthetic_data(args.batch_size, (args.image_size, args.image_size))
-                loss = train_step(model, image, mask, optimizer, device)
+                loss = train_step(model, image, mask, optimizer, device, loss_fn)
                 epoch_losses.append(loss)
         else:
             # Use real data
             for batch_idx, (image, mask) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.epochs}")):
-                loss = train_step(model, image, mask, optimizer, device)
+                loss = train_step(model, image, mask, optimizer, device, loss_fn)
                 epoch_losses.append(loss)
         
         avg_train_loss = sum(epoch_losses) / len(epoch_losses)
@@ -180,7 +220,7 @@ def main():
         
         # Validation
         if val_loader:
-            avg_val_loss = validate(model, val_loader, device)
+            avg_val_loss = validate(model, val_loader, device, loss_fn)
             val_losses.append(avg_val_loss)
         
         # Update learning rate
