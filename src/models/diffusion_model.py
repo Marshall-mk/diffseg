@@ -3,10 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 from typing import Tuple, Optional, Union
-from .unet import UNet
 
 try:
-    from diffusers import UNet2DModel, UNet2DConditionModel
+    from diffusers import UNet2DModel, UNet2DConditionModel, DDPMScheduler, DDIMScheduler
     DIFFUSERS_AVAILABLE = True
 except ImportError:
     DIFFUSERS_AVAILABLE = False
@@ -19,12 +18,13 @@ class DiffusionSegmentation(nn.Module):
                  in_channels: int = 3, 
                  num_classes: int = 1, 
                  timesteps: int = 1000,
-                 unet_type: str = "custom",
+                 unet_type: str = "diffusers_2d",
                  pretrained_model_name_or_path: Optional[str] = None,
                  diffusion_type: str = "gaussian",
                  morph_type: str = "dilation",
                  morph_kernel_size: int = 3,
-                 morph_schedule_type: str = "linear"):
+                 morph_schedule_type: str = "linear",
+                 scheduler_type: str = "ddpm"):
         """
         Initialize DiffusionSegmentation model.
         
@@ -32,12 +32,13 @@ class DiffusionSegmentation(nn.Module):
             in_channels: Number of input image channels (default: 3)
             num_classes: Number of segmentation classes (default: 1) 
             timesteps: Number of diffusion timesteps (default: 1000)
-            unet_type: Type of UNet to use. Options: "custom", "diffusers_2d", "diffusers_2d_cond"
+            unet_type: Type of UNet to use. Options: "diffusers_2d", "diffusers_2d_cond"
             pretrained_model_name_or_path: Path or name of pretrained diffusers model
             diffusion_type: Type of diffusion process. Options: "gaussian", "morphological"
             morph_type: Type of morphological operation. Options: "dilation", "erosion", "mixed"
             morph_kernel_size: Size of morphological kernel (default: 3)
             morph_schedule_type: Schedule type for morphological intensity. Options: "linear", "cosine", "quadratic"
+            scheduler_type: Type of diffusers scheduler. Options: "ddpm", "ddim"
         """
         super().__init__()
         self.num_classes = num_classes
@@ -46,13 +47,11 @@ class DiffusionSegmentation(nn.Module):
         self.diffusion_type = diffusion_type
         self.morph_type = morph_type
         
+        if not DIFFUSERS_AVAILABLE:
+            raise ImportError("diffusers library not available. Install with: pip install diffusers")
+        
         # Initialize UNet based on type
-        if unet_type == "custom":
-            self.unet = UNet(in_channels + num_classes, num_classes)
-        elif unet_type == "diffusers_2d":
-            if not DIFFUSERS_AVAILABLE:
-                raise ImportError("diffusers library not available. Install with: pip install diffusers")
-            
+        if unet_type == "diffusers_2d":
             if pretrained_model_name_or_path:
                 self.unet = UNet2DModel.from_pretrained(pretrained_model_name_or_path)
             else:
@@ -66,9 +65,6 @@ class DiffusionSegmentation(nn.Module):
                     up_block_types=("AttnUpBlock2D", "UpBlock2D", "UpBlock2D", "UpBlock2D"),
                 )
         elif unet_type == "diffusers_2d_cond":
-            if not DIFFUSERS_AVAILABLE:
-                raise ImportError("diffusers library not available. Install with: pip install diffusers")
-            
             if pretrained_model_name_or_path:
                 self.unet = UNet2DConditionModel.from_pretrained(pretrained_model_name_or_path)
             else:
@@ -83,16 +79,29 @@ class DiffusionSegmentation(nn.Module):
                     cross_attention_dim=768,  # Standard dimension for conditioning
                 )
         else:
-            raise ValueError(f"Unsupported unet_type: {unet_type}. Choose from: 'custom', 'diffusers_2d', 'diffusers_2d_cond'")
+            raise ValueError(f"Unsupported unet_type: {unet_type}. Choose from: 'diffusers_2d', 'diffusers_2d_cond'")
         
         # Initialize diffusion schedules based on type
         if diffusion_type == "gaussian":
-            # Gaussian noise schedule
-            self.register_buffer('betas', self._cosine_beta_schedule(timesteps))
-            self.register_buffer('alphas', 1.0 - self.betas)
-            self.register_buffer('alphas_cumprod', torch.cumprod(self.alphas, dim=0))
-            self.register_buffer('sqrt_alphas_cumprod', torch.sqrt(self.alphas_cumprod))
-            self.register_buffer('sqrt_one_minus_alphas_cumprod', torch.sqrt(1.0 - self.alphas_cumprod))
+            # Use diffusers scheduler instead of custom implementation
+            if scheduler_type == "ddpm":
+                self.scheduler = DDPMScheduler(
+                    num_train_timesteps=timesteps,
+                    beta_schedule="scaled_linear",
+                    beta_start=0.00085,
+                    beta_end=0.012,
+                    clip_sample=False,
+                )
+            elif scheduler_type == "ddim":
+                self.scheduler = DDIMScheduler(
+                    num_train_timesteps=timesteps,
+                    beta_schedule="scaled_linear",
+                    beta_start=0.00085,
+                    beta_end=0.012,
+                    clip_sample=False,
+                )
+            else:
+                raise ValueError(f"Unsupported scheduler_type: {scheduler_type}. Choose from: 'ddpm', 'ddim'")
         elif diffusion_type == "morphological":
             # Morphological operations
             self.soft_morph = SoftMorphology(kernel_size=morph_kernel_size, temperature=0.5)
@@ -100,26 +109,11 @@ class DiffusionSegmentation(nn.Module):
         else:
             raise ValueError(f"Unsupported diffusion_type: {diffusion_type}. Choose from: 'gaussian', 'morphological'")
 
-    def _cosine_beta_schedule(self, timesteps: int, s: float = 0.008) -> torch.Tensor:
-        steps = timesteps + 1
-        x = torch.linspace(0, timesteps, steps)
-        alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * math.pi * 0.5) ** 2
-        alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
-        betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-        return torch.clip(betas, 0, 0.999)
-
     def forward_diffusion(self, x0: torch.Tensor, t: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Forward diffusion process using diffusers scheduler"""
         noise = torch.randn_like(x0)
-        sqrt_alphas_cumprod_t = self.sqrt_alphas_cumprod[t]
-        sqrt_one_minus_alphas_cumprod_t = self.sqrt_one_minus_alphas_cumprod[t]
-        
-        # Reshape for broadcasting
-        while len(sqrt_alphas_cumprod_t.shape) < len(x0.shape):
-            sqrt_alphas_cumprod_t = sqrt_alphas_cumprod_t.unsqueeze(-1)
-            sqrt_one_minus_alphas_cumprod_t = sqrt_one_minus_alphas_cumprod_t.unsqueeze(-1)
-        
-        x_t = sqrt_alphas_cumprod_t * x0 + sqrt_one_minus_alphas_cumprod_t * noise
-        return x_t, noise
+        noisy_x = self.scheduler.add_noise(x0, noise, t)
+        return noisy_x, noise
 
     def forward_morphology(self, x0: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """Apply forward morphological process."""
@@ -146,9 +140,7 @@ class DiffusionSegmentation(nn.Module):
 
     def _call_unet(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """Call UNet with appropriate parameters based on type."""
-        if self.unet_type == "custom":
-            return self.unet(x, t)
-        elif self.unet_type == "diffusers_2d":
+        if self.unet_type == "diffusers_2d":
             # UNet2DModel expects (sample, timestep)
             return self.unet(x, t).sample
         elif self.unet_type == "diffusers_2d_cond":
@@ -206,39 +198,26 @@ class DiffusionSegmentation(nn.Module):
             return self.sample(image, mask)
 
     def sample(self, image: torch.Tensor, mask: torch.Tensor, num_inference_steps: int = 50) -> torch.Tensor:
-        step_size = self.timesteps // num_inference_steps
-        
         if self.diffusion_type == "gaussian":
-            # DDPM sampling for Gaussian diffusion
-            for i in reversed(range(0, self.timesteps, step_size)):
-                t = torch.full((image.shape[0],), i, device=image.device, dtype=torch.long)
+            # Use diffusers scheduler for sampling
+            self.scheduler.set_timesteps(num_inference_steps)
+            
+            for t in self.scheduler.timesteps:
+                t_tensor = torch.full((image.shape[0],), t, device=image.device, dtype=torch.long)
                 
                 # Predict noise
                 with torch.no_grad():
                     x = torch.cat([image, mask], dim=1)
-                    predicted_noise = self._call_unet(x, t)
+                    predicted_noise = self._call_unet(x, t_tensor)
                 
-                # Compute denoised mask
-                alpha_t = self.alphas[t]
-                alpha_cumprod_t = self.alphas_cumprod[t]
-                beta_t = self.betas[t]
-                
-                # Reshape for broadcasting
-                while len(alpha_t.shape) < len(mask.shape):
-                    alpha_t = alpha_t.unsqueeze(-1)
-                    alpha_cumprod_t = alpha_cumprod_t.unsqueeze(-1)
-                    beta_t = beta_t.unsqueeze(-1)
-                
-                mask = (1 / torch.sqrt(alpha_t)) * (mask - beta_t * predicted_noise / torch.sqrt(1 - alpha_cumprod_t))
-                
-                # Add noise if not the last step
-                if i > 0:
-                    mask = mask + torch.sqrt(beta_t) * torch.randn_like(mask)
+                # Use scheduler to compute previous sample
+                mask = self.scheduler.step(predicted_noise, t, mask).prev_sample
             
             return torch.sigmoid(mask)
             
         elif self.diffusion_type == "morphological":
-            # Reverse morphological process
+            # Reverse morphological process (unchanged)
+            step_size = self.timesteps // num_inference_steps
             for i in reversed(range(0, self.timesteps, step_size)):
                 t = torch.full((image.shape[0],), i, device=image.device, dtype=torch.long)
                 

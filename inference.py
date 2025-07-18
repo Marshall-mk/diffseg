@@ -20,9 +20,10 @@ from utils.visualization import visualize_segmentation, plot_inference_steps
 
 
 def load_model(checkpoint_path: str, device: torch.device, timesteps: int = 1000, 
-               unet_type: str = "custom", pretrained_model_name_or_path: str = None,
+               unet_type: str = "diffusers_2d", pretrained_model_name_or_path: str = None,
                diffusion_type: str = "gaussian", morph_type: str = "dilation",
-               morph_kernel_size: int = 3, morph_schedule_type: str = "linear") -> DiffusionSegmentation:
+               morph_kernel_size: int = 3, morph_schedule_type: str = "linear",
+               scheduler_type: str = "ddpm") -> DiffusionSegmentation:
     """Load trained model from checkpoint"""
     model = DiffusionSegmentation(
         in_channels=3, 
@@ -33,7 +34,8 @@ def load_model(checkpoint_path: str, device: torch.device, timesteps: int = 1000
         diffusion_type=diffusion_type,
         morph_type=morph_type,
         morph_kernel_size=morph_kernel_size,
-        morph_schedule_type=morph_schedule_type
+        morph_schedule_type=morph_schedule_type,
+        scheduler_type=scheduler_type
     ).to(device)
     
     checkpoint = torch.load(checkpoint_path, map_location=device)
@@ -174,8 +176,8 @@ def main():
     parser.add_argument('--timesteps', type=int, default=1000, help='Number of diffusion timesteps')
     parser.add_argument('--visualize-process', action='store_true', help='Visualize inference process')
     parser.add_argument('--no-vis', action='store_true', help='Skip saving visualizations in batch mode')
-    parser.add_argument('--unet-type', type=str, default='custom',
-                       choices=['custom', 'diffusers_2d', 'diffusers_2d_cond'], 
+    parser.add_argument('--unet-type', type=str, default='diffusers_2d',
+                       choices=['diffusers_2d', 'diffusers_2d_cond'], 
                        help='Type of UNet to use')
     parser.add_argument('--pretrained-model', type=str, help='Path or name of pretrained diffusers model')
     parser.add_argument('--diffusion-type', type=str, default='gaussian',
@@ -189,6 +191,9 @@ def main():
     parser.add_argument('--morph-schedule', type=str, default='linear',
                        choices=['linear', 'cosine', 'quadratic'],
                        help='Schedule type for morphological intensity')
+    parser.add_argument('--scheduler-type', type=str, default='ddpm',
+                       choices=['ddpm', 'ddim'],
+                       help='Type of diffusers scheduler to use')
     
     args = parser.parse_args()
     
@@ -199,7 +204,7 @@ def main():
     # Load model
     print(f"Loading model from {args.checkpoint}...")
     model = load_model(args.checkpoint, device, args.timesteps, args.unet_type, args.pretrained_model,
-                      args.diffusion_type, args.morph_type, args.morph_kernel_size, args.morph_schedule)
+                      args.diffusion_type, args.morph_type, args.morph_kernel_size, args.morph_schedule, args.scheduler_type)
     
     image_size = (args.image_size, args.image_size)
     

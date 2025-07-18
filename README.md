@@ -8,7 +8,6 @@ A PyTorch implementation of a diffusion-based image segmentation model that supp
   - **Gaussian Diffusion**: Traditional DDPM with noise-based forward process
   - **Morphological Diffusion**: Novel approach using morphological operations instead of Gaussian noise
 - **Multiple UNet Backends**: 
-  - Custom UNet implementation
   - HuggingFace Diffusers UNet2DModel
   - HuggingFace Diffusers UNet2DConditionModel
 - **Morphological Operations**: Differentiable dilation, erosion, opening, and closing operations
@@ -81,11 +80,11 @@ python test_morphological_diffusion.py
 #### Gaussian Diffusion (Traditional)
 Train with Gaussian noise-based diffusion:
 ```bash
-# With custom UNet
+# With diffusers UNet2DModel (default)
 python train.py --synthetic --epochs 50 --batch-size 8 --diffusion-type gaussian
 
-# With HuggingFace Diffusers UNet
-python train.py --synthetic --epochs 50 --unet-type diffusers_2d --diffusion-type gaussian
+# With diffusers UNet2DConditionModel
+python train.py --synthetic --epochs 50 --unet-type diffusers_2d_cond --diffusion-type gaussian
 ```
 
 #### Morphological Diffusion (Novel)
@@ -152,12 +151,6 @@ python inference.py --checkpoint /path/to/checkpoint.pth --interactive --diffusi
 
 ### UNet Architecture Options
 
-#### Custom UNet
-- Encoder-decoder structure with skip connections
-- ResNet blocks with time embeddings
-- Self-attention mechanisms in the middle layers
-- Sinusoidal position embeddings for timestep encoding
-
 #### HuggingFace Diffusers UNet2DModel
 - Pre-built 2D UNet from diffusers library
 - Configurable architecture with attention blocks
@@ -194,8 +187,7 @@ python inference.py --checkpoint /path/to/checkpoint.pth --interactive --diffusi
 - `--resume`: Path to checkpoint to resume from
 
 #### UNet Architecture Options
-- `--unet-type`: Type of UNet to use (default: custom)
-  - `custom`: Custom UNet implementation
+- `--unet-type`: Type of UNet to use (default: diffusers_2d)
   - `diffusers_2d`: HuggingFace UNet2DModel
   - `diffusers_2d_cond`: HuggingFace UNet2DConditionModel
 - `--pretrained-model`: Path or name of pretrained diffusers model
@@ -269,7 +261,7 @@ python train.py --image-dir ./data/images --mask-dir ./data/masks --epochs 100 -
 - `--no-vis`: Skip saving visualizations in batch mode
 
 #### UNet Architecture Parameters (must match training)
-- `--unet-type`: Type of UNet used during training (default: custom)
+- `--unet-type`: Type of UNet used during training (default: diffusers_2d)
 - `--pretrained-model`: Path or name of pretrained diffusers model (if used during training)
 
 #### Diffusion Type Parameters (must match training)
@@ -285,11 +277,11 @@ python train.py --image-dir ./data/images --mask-dir ./data/masks --epochs 100 -
 # Single image with Gaussian diffusion
 python inference.py --checkpoint gaussian_model.pth --input image.jpg --diffusion-type gaussian
 
-# Batch processing with custom UNet
-python inference.py --checkpoint gaussian_model.pth --input ./images/ --batch --output ./results/ --diffusion-type gaussian --unet-type custom
+# Batch processing with diffusers UNet2DModel
+python inference.py --checkpoint gaussian_model.pth --input ./images/ --batch --output ./results/ --diffusion-type gaussian --unet-type diffusers_2d
 
-# With HuggingFace Diffusers UNet
-python inference.py --checkpoint diffusers_model.pth --input image.jpg --diffusion-type gaussian --unet-type diffusers_2d
+# With diffusers UNet2DConditionModel
+python inference.py --checkpoint diffusers_model.pth --input image.jpg --diffusion-type gaussian --unet-type diffusers_2d_cond
 ```
 
 #### Morphological Diffusion Inference

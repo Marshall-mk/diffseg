@@ -107,8 +107,8 @@ def main():
     parser.add_argument('--val-split', type=float, default=0.0, help='Validation split ratio (0.0 = no validation)')
     parser.add_argument('--augmentation-mode', type=str, default='medium', 
                        choices=['light', 'medium', 'heavy', 'none'], help='Augmentation intensity')
-    parser.add_argument('--unet-type', type=str, default='custom',
-                       choices=['custom', 'diffusers_2d', 'diffusers_2d_cond'], 
+    parser.add_argument('--unet-type', type=str, default='diffusers_2d',
+                       choices=['diffusers_2d', 'diffusers_2d_cond'], 
                        help='Type of UNet to use')
     parser.add_argument('--pretrained-model', type=str, help='Path or name of pretrained diffusers model')
     parser.add_argument('--diffusion-type', type=str, default='gaussian',
@@ -124,6 +124,9 @@ def main():
                        help='Schedule type for morphological intensity')
     parser.add_argument('--use-morph-loss', action='store_true',
                        help='Use morphological loss instead of MSE')
+    parser.add_argument('--scheduler-type', type=str, default='ddpm',
+                       choices=['ddpm', 'ddim'],
+                       help='Type of diffusers scheduler to use')
     
     args = parser.parse_args()
     
@@ -154,7 +157,8 @@ def main():
         diffusion_type=args.diffusion_type,
         morph_type=args.morph_type,
         morph_kernel_size=args.morph_kernel_size,
-        morph_schedule_type=args.morph_schedule
+        morph_schedule_type=args.morph_schedule,
+        scheduler_type=args.scheduler_type
     ).to(device)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
