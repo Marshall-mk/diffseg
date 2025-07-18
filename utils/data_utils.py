@@ -206,7 +206,7 @@ class SegmentationDataset(Dataset):
         image = torch.from_numpy(np.array(image)).permute(2, 0, 1).float() / 255.0
         mask = torch.from_numpy(np.array(mask)).unsqueeze(0).float() / 255.0
         
-        # Normalize image
+        # Normalize image to [-1, 1] range (diffusers standard)
         if self.normalize:
             image = image * 2.0 - 1.0
         
@@ -349,14 +349,14 @@ def preprocess_image(image_path: str, image_size: Tuple[int, int] = (256, 256)) 
     image = Image.open(image_path).convert('RGB')
     image = image.resize(image_size, Image.BILINEAR)
     image = torch.from_numpy(np.array(image)).permute(2, 0, 1).float() / 255.0
-    image = image * 2.0 - 1.0  # Normalize to [-1, 1]
+    image = image * 2.0 - 1.0  # Normalize to [-1, 1] (diffusers standard)
     return image.unsqueeze(0)
 
 
 def create_synthetic_data(batch_size: int = 4, image_size: Tuple[int, int] = (256, 256)) -> Tuple[torch.Tensor, torch.Tensor]:
     """Create synthetic data for testing"""
-    # Random RGB images
-    images = torch.randn(batch_size, 3, *image_size)
+    # Random RGB images in [-1, 1] range (diffusers standard)
+    images = torch.rand(batch_size, 3, *image_size) * 2.0 - 1.0
     
     # Random binary masks with some structure
     masks = torch.zeros(batch_size, 1, *image_size)

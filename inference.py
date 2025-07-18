@@ -56,7 +56,8 @@ def predict_single_image(model: DiffusionSegmentation, image_path: str,
     
     # Generate prediction
     with torch.no_grad():
-        predicted_mask = model(image)
+        # Call the sample method directly to control num_inference_steps
+        predicted_mask = model.sample(image, mask=None, num_inference_steps=num_inference_steps)
     
     return predicted_mask
 

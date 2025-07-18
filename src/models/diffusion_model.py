@@ -197,7 +197,21 @@ class DiffusionSegmentation(nn.Module):
             
             return self.sample(image, mask)
 
-    def sample(self, image: torch.Tensor, mask: torch.Tensor, num_inference_steps: int = 50) -> torch.Tensor:
+    def sample(self, image: torch.Tensor, mask: torch.Tensor = None, num_inference_steps: int = 50) -> torch.Tensor:
+        # Initialize mask if not provided
+        if mask is None:
+            if self.diffusion_type == "gaussian":
+                # Start from pure noise
+                mask = torch.randn(image.shape[0], self.num_classes, image.shape[2], image.shape[3], device=image.device)
+            elif self.diffusion_type == "morphological":
+                # Start from binary state
+                if self.morph_type == "erosion":
+                    # Start from all ones for erosion
+                    mask = torch.ones(image.shape[0], self.num_classes, image.shape[2], image.shape[3], device=image.device)
+                else:
+                    # Start from all zeros for dilation
+                    mask = torch.zeros(image.shape[0], self.num_classes, image.shape[2], image.shape[3], device=image.device)
+        
         if self.diffusion_type == "gaussian":
             # Use diffusers scheduler for sampling
             self.scheduler.set_timesteps(num_inference_steps)
