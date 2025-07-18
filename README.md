@@ -63,18 +63,6 @@ Run the demo to see the model in action with synthetic data:
 python demo.py
 ```
 
-### Test Different UNet Backends
-Test switching between custom and diffusers UNet models:
-```bash
-python test_unet_switch.py
-```
-
-### Test Morphological Diffusion
-Test the novel morphological diffusion approach:
-```bash
-python test_morphological_diffusion.py
-```
-
 ### Training
 
 #### Gaussian Diffusion (Traditional)
@@ -690,18 +678,6 @@ This implementation introduces a novel alternative to traditional Gaussian diffu
 - Working with geometric/structured data
 - Want faster, more controlled inference
 
-### Testing the Approach
-
-```bash
-# Test morphological vs Gaussian on same data
-python test_morphological_diffusion.py
-
-# This will compare:
-# - Training loss curves
-# - Inference quality
-# - Parameter efficiency
-# - Convergence speed
-```
 
 ## Dependencies
 
