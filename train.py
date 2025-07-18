@@ -285,7 +285,7 @@ def main():
     if val_losses:
         plot_training_curves(train_losses, val_losses, "Training vs Validation Loss", str(output_dir / "training_curves.png"))
     else:
-        plot_training_curves(train_losses, "Training Loss", str(output_dir / "training_curves.png"))
+        plot_training_curves(train_losses, title="Training Loss", save_path=str(output_dir / "training_curves.png"))
     
     if args.wandb:
         wandb.finish()

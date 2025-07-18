@@ -55,10 +55,15 @@ def visualize_segmentation(image: torch.Tensor, mask: torch.Tensor, predicted_ma
     plt.show()
 
 
-def plot_training_curves(losses: List[float], title: str = "Training Loss", save_path: Optional[str] = None):
-    """Plot training loss curves"""
+def plot_training_curves(train_losses: List[float], val_losses: Optional[List[float]] = None, 
+                         title: str = "Training Loss", save_path: Optional[str] = None):
+    """Plot training loss curves with optional validation losses"""
     plt.figure(figsize=(10, 6))
-    plt.plot(losses, label='Training Loss')
+    plt.plot(train_losses, label='Training Loss')
+    
+    if val_losses is not None:
+        plt.plot(val_losses, label='Validation Loss')
+    
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.title(title)
@@ -115,6 +120,11 @@ def plot_inference_steps(model, image: torch.Tensor, num_steps: int = 10, save_p
     device = next(model.parameters()).device
     image = image.to(device)
     
+    # Only works with Gaussian diffusion
+    if model.diffusion_type != "gaussian":
+        print("plot_inference_steps only works with Gaussian diffusion")
+        return
+    
     # Start with random noise
     mask = torch.randn(1, 1, image.shape[2], image.shape[3], device=device)
     
@@ -122,36 +132,26 @@ def plot_inference_steps(model, image: torch.Tensor, num_steps: int = 10, save_p
     axes = axes.flatten()
     
     model.eval()
-    step_size = model.timesteps // num_steps
-    step_idx = 0
+    
+    # Use the model's scheduler for proper timestep handling
+    model.scheduler.set_timesteps(num_steps)
+    timesteps = model.scheduler.timesteps
     
     with torch.no_grad():
-        for i in reversed(range(0, model.timesteps, step_size)):
+        for step_idx, t in enumerate(timesteps):
             if step_idx < len(axes):
                 mask_np = torch.sigmoid(mask).squeeze().cpu().numpy()
                 axes[step_idx].imshow(mask_np, cmap='gray')
-                axes[step_idx].set_title(f"Step {step_idx}, t = {i}")
+                axes[step_idx].set_title(f"Step {step_idx}, t = {t}")
                 axes[step_idx].axis('off')
-                step_idx += 1
             
-            # Denoising step
-            t = torch.full((image.shape[0],), i, device=device, dtype=torch.long)
+            # Denoising step using the UNet
+            t_tensor = torch.full((image.shape[0],), t, device=device, dtype=torch.long)
             x = torch.cat([image, mask], dim=1)
-            predicted_noise = model.unet(x, t)
+            predicted_noise = model._call_unet(x, t_tensor)
             
-            alpha_t = model.alphas[t]
-            alpha_cumprod_t = model.alphas_cumprod[t]
-            beta_t = model.betas[t]
-            
-            while len(alpha_t.shape) < len(mask.shape):
-                alpha_t = alpha_t.unsqueeze(-1)
-                alpha_cumprod_t = alpha_cumprod_t.unsqueeze(-1)
-                beta_t = beta_t.unsqueeze(-1)
-            
-            mask = (1 / torch.sqrt(alpha_t)) * (mask - beta_t * predicted_noise / torch.sqrt(1 - alpha_cumprod_t))
-            
-            if i > 0:
-                mask = mask + torch.sqrt(beta_t) * torch.randn_like(mask)
+            # Use scheduler to compute previous sample
+            mask = model.scheduler.step(predicted_noise, t, mask).prev_sample
     
     plt.suptitle("Reverse Diffusion Process (Inference)")
     plt.tight_layout()
