@@ -16,7 +16,7 @@ class SoftMorphology(nn.Module):
     def __init__(self, kernel_size: int = 3, temperature: float = 1.0):
         super().__init__()
         self.kernel_size = kernel_size
-        self.temperature = temperature
+        self.temperature = max(temperature, 0.1)  # Prevent very small temperature values
         
         # Create structural element (circular kernel)
         self.register_buffer('kernel', self._create_circular_kernel(kernel_size))
@@ -39,13 +39,15 @@ class SoftMorphology(nn.Module):
         
         # Apply structural element mask
         kernel_mask = self.kernel.view(1, 1, -1, 1, 1)
-        masked = unfolded * kernel_mask + (1 - kernel_mask) * (-float('inf'))
+        # Use large negative value instead of -inf to avoid NaN
+        masked = unfolded * kernel_mask + (1 - kernel_mask) * (-1e6)
         
         # Soft maximum using temperature-scaled softmax
         weights = F.softmax(masked / self.temperature, dim=2)
         result = (unfolded * weights).sum(dim=2)
         
-        return result
+        # Ensure output is in valid range
+        return torch.clamp(result, 0, 1)
     
     def soft_erosion(self, x: torch.Tensor) -> torch.Tensor:
         """Soft erosion using min-pooling with temperature scaling."""
@@ -57,13 +59,15 @@ class SoftMorphology(nn.Module):
         
         # Apply structural element mask
         kernel_mask = self.kernel.view(1, 1, -1, 1, 1)
-        masked = unfolded * kernel_mask + (1 - kernel_mask) * float('inf')
+        # Use large positive value instead of inf to avoid NaN
+        masked = unfolded * kernel_mask + (1 - kernel_mask) * 1e6
         
         # Soft minimum using temperature-scaled softmin
         weights = F.softmax(-masked / self.temperature, dim=2)
         result = (unfolded * weights).sum(dim=2)
         
-        return result
+        # Ensure output is in valid range
+        return torch.clamp(result, 0, 1)
     
     def soft_opening(self, x: torch.Tensor) -> torch.Tensor:
         """Opening = erosion followed by dilation."""
@@ -155,6 +159,7 @@ class MorphologicalLoss(nn.Module):
 def create_morph_schedule(timesteps: int, schedule_type: str = "linear") -> torch.Tensor:
     """Create schedule for morphological operation intensity."""
     if schedule_type == "linear":
+        # Create a schedule that goes from 0 (no degradation) to 1 (max degradation)
         return torch.linspace(0, 1, timesteps)
     elif schedule_type == "cosine":
         x = torch.linspace(0, 1, timesteps)
@@ -170,30 +175,59 @@ def apply_morphological_degradation(mask: torch.Tensor,
                                   intensity: float, 
                                   morph_type: str = "dilation",
                                   soft_morph: SoftMorphology = None) -> torch.Tensor:
-    """Apply morphological degradation with given intensity."""
+    """Apply morphological degradation with given intensity.
+    
+    Following Cold Diffusion principles, this should be deterministic and reversible.
+    """
     if soft_morph is None:
         soft_morph = SoftMorphology(kernel_size=3, temperature=0.5)
     
-    result = mask.clone()
-    num_operations = max(1, int(intensity * 10))  # 1 to 10 operations
+    # Ensure intensity is in valid range
+    intensity = torch.clamp(torch.tensor(intensity), 0, 1).item()
     
-    for _ in range(num_operations):
-        if morph_type == "dilation":
-            result = soft_morph.soft_dilation(result)
-        elif morph_type == "erosion":
-            result = soft_morph.soft_erosion(result)
-        elif morph_type == "opening":
-            result = soft_morph.soft_opening(result)
-        elif morph_type == "closing":
-            result = soft_morph.soft_closing(result)
-        elif morph_type == "mixed":
-            # Randomly choose operation
-            if np.random.random() > 0.5:
-                result = soft_morph.soft_dilation(result)
-            else:
-                result = soft_morph.soft_erosion(result)
-        
-        # Clip to valid range
-        result = torch.clamp(result, 0, 1)
+    if intensity == 0:
+        return mask.clone()
+    
+    # Apply morphological operation based on intensity
+    # Use a smooth interpolation rather than discrete operations
+    result = mask.clone()
+    
+    if morph_type == "dilation":
+        # Gradually dilate based on intensity
+        dilated = soft_morph.soft_dilation(result)
+        result = (1 - intensity) * result + intensity * dilated
+    elif morph_type == "erosion":
+        # Gradually erode based on intensity
+        eroded = soft_morph.soft_erosion(result)
+        result = (1 - intensity) * result + intensity * eroded
+    elif morph_type == "opening":
+        # Apply opening with intensity
+        opened = soft_morph.soft_opening(result)
+        result = (1 - intensity) * result + intensity * opened
+    elif morph_type == "closing":
+        # Apply closing with intensity
+        closed = soft_morph.soft_closing(result)
+        result = (1 - intensity) * result + intensity * closed
+    elif morph_type == "mixed":
+        # Mix dilation and erosion based on intensity
+        dilated = soft_morph.soft_dilation(result)
+        eroded = soft_morph.soft_erosion(result)
+        # Use intensity to blend between erosion and dilation
+        if intensity < 0.5:
+            # More erosion
+            weight = intensity * 2
+            result = (1 - weight) * result + weight * eroded
+        else:
+            # More dilation
+            weight = (intensity - 0.5) * 2
+            result = (1 - weight) * result + weight * dilated
+    
+    # Ensure output is in valid range and check for NaN
+    result = torch.clamp(result, 0, 1)
+    
+    # Check for NaN values and replace with original mask if found
+    if torch.isnan(result).any():
+        print("Warning: NaN values detected in morphological degradation, returning original mask")
+        return mask.clone()
     
     return result

@@ -230,19 +230,27 @@ class DiffusionSegmentation(nn.Module):
             return torch.sigmoid(mask)
             
         elif self.diffusion_type == "morphological":
-            # Reverse morphological process (unchanged)
+            # Reverse morphological process following Cold Diffusion principles
             step_size = self.timesteps // num_inference_steps
+            
             for i in reversed(range(0, self.timesteps, step_size)):
                 t = torch.full((image.shape[0],), i, device=image.device, dtype=torch.long)
                 
-                # Predict the clean mask
+                # Predict the clean mask (what the model thinks the original mask should be)
                 with torch.no_grad():
                     x = torch.cat([image, mask], dim=1)
                     predicted_clean_mask = self._call_unet(x, t)
                 
-                # Update mask towards predicted clean mask
-                alpha = 1.0 - (i / self.timesteps)  # Interpolation weight
-                mask = alpha * predicted_clean_mask + (1 - alpha) * mask
+                # In Cold Diffusion, we gradually move from degraded to clean
+                # The key is to use the predicted clean mask more strongly as we get closer to t=0
+                if i > 0:
+                    # We're still in the reverse process, blend predicted clean with current
+                    # As we approach t=0, we should trust the prediction more
+                    alpha = 1.0 - (i / self.timesteps)  # alpha increases as t decreases
+                    mask = alpha * predicted_clean_mask + (1 - alpha) * mask
+                else:
+                    # Final step: use the predicted clean mask
+                    mask = predicted_clean_mask
                 
                 # Apply constraints
                 mask = torch.clamp(mask, 0, 1)
